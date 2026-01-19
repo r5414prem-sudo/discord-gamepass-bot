@@ -4,6 +4,7 @@ from discord.ui import Button, View
 import os
 from flask import Flask
 from threading import Thread
+import json
 
 # Flask web server to keep bot alive
 app = Flask('')
@@ -27,160 +28,176 @@ tree = app_commands.CommandTree(client)
 
 # Configuration
 RATE = 7  # $7 per 1000 Robux
-TICKET_CHANNEL = "〘🎟〙𝗧𝗜𝗖𝗞𝗘𝗧𝗦"  # Your ticket channel name
+SHOP_CHANNEL_ID = None  # Will be set with /setup command
+TICKET_CHANNEL_ID = None  # Will be set with /setup command
 
-# Storage for user states
-user_states = {}
+# Storage for shop channel (persistent)
+def load_config():
+    global SHOP_CHANNEL_ID, TICKET_CHANNEL_ID
+    try:
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+            SHOP_CHANNEL_ID = config.get('shop_channel_id')
+            TICKET_CHANNEL_ID = config.get('ticket_channel_id')
+    except FileNotFoundError:
+        pass
 
-class GiftableView(View):
-    def __init__(self, user_id):
-        super().__init__(timeout=180)
-        self.user_id = user_id
+def save_config():
+    with open('config.json', 'w') as f:
+        json.dump({
+            'shop_channel_id': SHOP_CHANNEL_ID,
+            'ticket_channel_id': TICKET_CHANNEL_ID
+        }, f)
+
+class ShopView(View):
+    def __init__(self, ticket_channel_id):
+        super().__init__(timeout=None)  # Never timeout
+        self.ticket_channel_id = ticket_channel_id
     
-    @discord.ui.button(label="✅ Yes, Giftable", style=discord.ButtonStyle.green)
-    async def giftable_yes(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("This button is not for you!", ephemeral=True)
-            return
-        
-        user_states[self.user_id] = "awaiting_amount"
-        
+    @discord.ui.button(label="🎮 Buy Giftable Gamepass", style=discord.ButtonStyle.green, custom_id="giftable_gamepass")
+    async def giftable_gamepass(self, interaction: discord.Interaction, button: Button):
         embed = discord.Embed(
-            title="💰 Enter Gamepass Price",
-            description="Please type the **Robux amount** of your gamepass.\n\nExample: `1000` or `5000`",
+            title="🎮 Giftable Gamepass Purchase",
+            description=f"To purchase a **giftable gamepass**, please create a ticket in <#{self.ticket_channel_id}>",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="📊 Current Rate",
+            value=f"**${RATE} per 1,000 Robux**",
+            inline=False
+        )
+        embed.add_field(
+            name="📝 What to Include",
+            value="• Gamepass link\n• Robux amount\n• Your username",
+            inline=False
+        )
+        embed.set_footer(text=f"Click the channel mention to go to tickets")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="💎 Buy Robux", style=discord.ButtonStyle.blurple, custom_id="buy_robux")
+    async def buy_robux(self, interaction: discord.Interaction, button: Button):
+        embed = discord.Embed(
+            title="💎 Robux Purchase",
+            description=f"To purchase **Robux**, please create a ticket in <#{self.ticket_channel_id}>",
             color=discord.Color.blue()
         )
-        embed.set_footer(text="Type the amount in chat")
-        
-        await interaction.response.edit_message(embed=embed, view=None)
-    
-    @discord.ui.button(label="❌ No, Not Giftable", style=discord.ButtonStyle.red)
-    async def giftable_no(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("This button is not for you!", ephemeral=True)
-            return
-        
-        # Ask if they want to buy giftable gamepass
-        embed = discord.Embed(
-            title="⚠️ Service Unavailable",
-            description="**Non-giftable gamepasses are currently unavailable.**\n\nWould you like to purchase a **giftable gamepass** instead?",
-            color=discord.Color.orange()
+        embed.add_field(
+            name="📊 Current Rate",
+            value=f"**${RATE} per 1,000 Robux**",
+            inline=False
         )
+        embed.add_field(
+            name="📝 What to Include",
+            value="• Amount of Robux needed\n• Your Roblox username\n• Payment method",
+            inline=False
+        )
+        embed.set_footer(text=f"Click the channel mention to go to tickets")
         
-        view = BuyGiftableView(self.user_id)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-class BuyGiftableView(View):
-    def __init__(self, user_id):
-        super().__init__(timeout=180)
-        self.user_id = user_id
+@tree.command(name="shop", description="Display the shop menu")
+@app_commands.checks.has_permissions(administrator=True)
+async def shop(interaction: discord.Interaction):
+    """Display the shop menu with purchase options"""
     
-    @discord.ui.button(label="✅ Yes, Buy Giftable", style=discord.ButtonStyle.green)
-    async def buy_yes(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("This button is not for you!", ephemeral=True)
-            return
-        
-        # Ask again if their gamepass is giftable
-        embed = discord.Embed(
-            title="🎁 Giftable Gamepass Purchase",
-            description="**Is YOUR gamepass giftable?**\n\nA giftable gamepass allows us to transfer it to you.",
-            color=discord.Color.blue()
+    if SHOP_CHANNEL_ID is None:
+        await interaction.response.send_message(
+            "❌ Shop channel not set! Use `/setup shop_channel:#channel` first.",
+            ephemeral=True
         )
-        
-        view = GiftableView(self.user_id)
-        await interaction.response.edit_message(embed=embed, view=view)
+        return
     
-    @discord.ui.button(label="❌ No Thanks", style=discord.ButtonStyle.red)
-    async def buy_no(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("This button is not for you!", ephemeral=True)
-            return
-        
-        embed = discord.Embed(
-            title="👋 See You Later!",
-            description=f"No problem! If you change your mind, use `/calculate` again.\n\nFor questions, visit #{TICKET_CHANNEL}",
-            color=discord.Color.blue()
+    if TICKET_CHANNEL_ID is None:
+        await interaction.response.send_message(
+            "❌ Ticket channel not set! Use `/setup ticket_channel:#channel` first.",
+            ephemeral=True
         )
-        
-        await interaction.response.edit_message(embed=embed, view=None)
-
-@tree.command(name="calculate", description="Calculate gamepass price in USD")
-async def calculate(interaction: discord.Interaction):
-    """Calculate how much a gamepass costs in real money"""
+        return
+    
+    # Check if command is used in the shop channel
+    if interaction.channel_id != SHOP_CHANNEL_ID:
+        await interaction.response.send_message(
+            f"❌ This command can only be used in <#{SHOP_CHANNEL_ID}>",
+            ephemeral=True
+        )
+        return
     
     embed = discord.Embed(
-        title="🎮 Gamepass Price Calculator",
-        description="**Is your gamepass giftable?**\n\nGiftable gamepasses can be transferred between accounts.",
-        color=discord.Color.green()
+        title="🛒 Welcome to Our Shop!",
+        description="Choose what you'd like to purchase:",
+        color=discord.Color.gold()
     )
     embed.add_field(
-        name="📊 Current Rate",
+        name="💰 Current Rate",
         value=f"**${RATE} per 1,000 Robux**",
         inline=False
     )
-    embed.set_footer(text="Select an option below")
+    embed.add_field(
+        name="🎫 How to Purchase",
+        value=f"Click a button below, then create a ticket in <#{TICKET_CHANNEL_ID}>",
+        inline=False
+    )
+    embed.set_footer(text="Select an option below to get started")
     
-    view = GiftableView(interaction.user.id)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
+    view = ShopView(TICKET_CHANNEL_ID)
+    await interaction.response.send_message(embed=embed, view=view)
 
-@client.event
-async def on_message(message):
-    # Ignore bot messages
-    if message.author.bot:
-        return
+@tree.command(name="setup", description="Set the shop and ticket channels")
+@app_commands.describe(
+    shop_channel="The channel where /shop command will work",
+    ticket_channel="The channel where users create tickets"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def setup(interaction: discord.Interaction, shop_channel: discord.TextChannel, ticket_channel: discord.TextChannel):
+    """Set the shop and ticket channels"""
+    global SHOP_CHANNEL_ID, TICKET_CHANNEL_ID
     
-    # Check if user is awaiting amount
-    user_id = message.author.id
-    if user_id in user_states and user_states[user_id] == "awaiting_amount":
-        try:
-            # Parse robux amount
-            robux = int(message.content.replace(",", ""))
-            
-            if robux <= 0:
-                await message.reply("❌ Please enter a valid positive number!")
-                return
-            
-            # Calculate USD price
-            usd_price = (robux / 1000) * RATE
-            
-            # Create result embed
-            embed = discord.Embed(
-                title="💵 Price Calculation",
-                description=f"**Gamepass Price:** {robux:,} Robux",
-                color=discord.Color.gold()
-            )
-            embed.add_field(
-                name="💰 USD Cost",
-                value=f"**${usd_price:.2f}**",
-                inline=False
-            )
-            embed.add_field(
-                name="📊 Calculation",
-                value=f"{robux:,} ÷ 1,000 × ${RATE} = **${usd_price:.2f}**",
-                inline=False
-            )
-            embed.add_field(
-                name="🎫 Next Step",
-                value=f"To purchase, create a ticket in #{TICKET_CHANNEL}",
-                inline=False
-            )
-            embed.set_footer(text=f"Requested by {message.author.name}")
-            
-            await message.reply(embed=embed)
-            
-            # Clear user state
-            del user_states[user_id]
-            
-        except ValueError:
-            await message.reply("❌ Invalid number! Please enter a valid Robux amount (example: `1000`)")
+    SHOP_CHANNEL_ID = shop_channel.id
+    TICKET_CHANNEL_ID = ticket_channel.id
+    save_config()
+    
+    embed = discord.Embed(
+        title="✅ Channels Set Successfully!",
+        description="Bot configuration updated:",
+        color=discord.Color.green()
+    )
+    embed.add_field(
+        name="🛒 Shop Channel",
+        value=f"{shop_channel.mention}",
+        inline=False
+    )
+    embed.add_field(
+        name="🎫 Ticket Channel",
+        value=f"{ticket_channel.mention}",
+        inline=False
+    )
+    embed.add_field(
+        name="📝 Next Step",
+        value=f"Go to {shop_channel.mention} and use `/shop` to display the shop menu",
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @client.event
 async def on_ready():
+    # Load saved config
+    load_config()
+    
     await tree.sync()
     print(f'✅ Bot is ready! Logged in as {client.user}')
     print(f'📊 Rate: ${RATE} per 1,000 Robux')
-    print(f'🎫 Ticket Channel: #{TICKET_CHANNEL}')
+    if SHOP_CHANNEL_ID:
+        print(f'🛒 Shop Channel ID: {SHOP_CHANNEL_ID}')
+    else:
+        print('⚠️  Shop channel not set.')
+    if TICKET_CHANNEL_ID:
+        print(f'🎫 Ticket Channel ID: {TICKET_CHANNEL_ID}')
+    else:
+        print('⚠️  Ticket channel not set.')
+    if not SHOP_CHANNEL_ID or not TICKET_CHANNEL_ID:
+        print('Use /setup to configure both channels.')
 
 # Start web server to keep bot alive
 keep_alive()
