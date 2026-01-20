@@ -23,6 +23,8 @@ def keep_alive():
 # Bot setup
 intents = discord.Intents.default()
 intents.message_content = True
+intents.guilds = True
+intents.guild_messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
@@ -179,6 +181,48 @@ async def setup(interaction: discord.Interaction, shop_channel: discord.TextChan
     )
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@tree.command(name="refresh", description="Refresh bot's channel cache and sync commands")
+@app_commands.checks.has_permissions(administrator=True)
+async def refresh(interaction: discord.Interaction):
+    """Refresh the bot to see new channels"""
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # Sync slash commands
+        await tree.sync()
+        
+        # Count channels
+        channel_count = len(interaction.guild.text_channels)
+        
+        embed = discord.Embed(
+            title="🔄 Bot Refreshed!",
+            description="Successfully refreshed bot cache and synced commands.",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="📊 Channels Detected",
+            value=f"**{channel_count}** text channels",
+            inline=False
+        )
+        embed.add_field(
+            name="✅ What was refreshed",
+            value="• Channel cache\n• Slash commands\n• Server data",
+            inline=False
+        )
+        embed.set_footer(text="You can now use /setup with new channels")
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+        print(f"🔄 Bot refreshed by {interaction.user} | {channel_count} channels detected")
+        
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Error refreshing bot: {str(e)}",
+            ephemeral=True
+        )
+        print(f"❌ Refresh error: {e}")
 
 @client.event
 async def on_ready():
